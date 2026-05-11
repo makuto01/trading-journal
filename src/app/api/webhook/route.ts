@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { handleWebhook } from "@/lib/webhook-handler"
+import { handleWebhook, type TradeRepository } from "@/lib/webhook-handler"
 import { prisma } from "@/lib/prisma"
 
 export const runtime = "nodejs"
@@ -16,7 +16,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   const result = await handleWebhook({
     authorizationHeader: request.headers.get("authorization"),
     rawBody,
-    prisma,
+    // Prisma's create/update generics are stricter than our minimal repository
+    // surface, but the actual call shape is compatible at runtime.
+    prisma: prisma as unknown as TradeRepository,
     secret: process.env.WEBHOOK_SECRET,
   })
 

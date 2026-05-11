@@ -1,0 +1,131 @@
+//@version=5
+// =============================================================================
+//   Trading Journal — Limit Order Mirror
+// =============================================================================
+//
+//   What it does
+//   ------------
+//   Mirrors a planned limit order on the chart and auto-fires webhooks to your
+//   trading journal when price touches Entry (→ open) and again when price
+//   touches SL or TP (→ close with PnL filled in).
+//
+//   How to use
+//   ----------
+//   1. Add this indicator to your chart from Pine Editor → Save → Add to chart.
+//   2. Open the settings panel — fill it like a broker form:
+//        Side, Entry, Stop Loss, Take Profit, Lots, Secret, Reason.
+//   3. Create a TradingView alert:
+//        Condition: this indicator → "Any alert() function call"
+//        Webhook URL: https://your-domain.com/api/webhook
+//        Message: leave empty (the indicator builds the JSON itself)
+//        Expiration: pick a far-future date
+//   4. Want multiple concurrent positions? Add this indicator to the same chart
+//      multiple times — once per planned trade. Each instance has independent
+//      state, settings, and external ID.
+//
+//   Notes
+//   -----
+//   • Free-tier TradingView can't set custom headers, so the secret is sent in
+//     the JSON body. Keep it private.
+//   • PnL is approximated as (exit - entry) × lots × lotMultiplier. Adjust
+//     lotMultiplier per asset class (forex=100000, crypto=1, futures=contract).
+//     You can always edit PnL after the fact in the journal UI.
+//   • External ID auto-generates from the first bar's timestamp, ensuring open
+//     and close share the same key.
+//
+// =============================================================================
+
+indicator("Trading Journal — Limit Order Mirror", overlay=true)
+
+// ---- Inputs (broker-form style) --------------------------------------------
+sideInput      = input.string("LONG", "Side", options=["LONG", "SHORT"], group="Order")
+entryPrice     = input.float(0.0,    "Entry Price",   step=0.00001,        group="Order")
+stopLoss       = input.float(0.0,    "Stop Loss",     step=0.00001,        group="Order")
+takeProfit     = input.float(0.0,    "Take Profit",   step=0.00001,        group="Order")
+lotsInput      = input.float(0.10,   "Lots / Size",   step=0.01,           group="Order")
+lotMultiplier  = input.float(100000, "Lot Multiplier (forex=100000, crypto=1)", step=1, group="Order")
+reasonInput    = input.string("",    "Reason / Setup notes",               group="Order")
+
+secretInput    = input.string("",    "Webhook Secret",                     group="Webhook")
+externalIdRaw  = input.string("",    "External ID (empty = auto-generate)", group="Webhook")
+
+enableAlerts   = input.bool(true,    "Enable alerts",                      group="Behavior")
+showLevels     = input.bool(true,    "Draw Entry / SL / TP lines",         group="Behavior")
+
+// ---- State ------------------------------------------------------------------
+var bool   triggeredOpen  = false
+var bool   triggeredClose = false
+var string externalId     = na
+
+if na(externalId)
+    externalId := externalIdRaw == "" ? "tj-" + str.tostring(timenow) : externalIdRaw
+
+isLong   = sideInput == "LONG"
+sideJson = isLong ? "BUY" : "SELL"
+
+// ---- Level visualization ----------------------------------------------------
+var line entryLine = na
+var line slLine    = na
+var line tpLine    = na
+
+if showLevels and barstate.islast and entryPrice > 0
+    if not na(entryLine)
+        line.delete(entryLine)
+    if not na(slLine)
+        line.delete(slLine)
+    if not na(tpLine)
+        line.delete(tpLine)
+    entryLine := line.new(bar_index - 60, entryPrice, bar_index, entryPrice, color=color.new(color.blue, 0),  width=1, extend=extend.right)
+    slLine    := line.new(bar_index - 60, stopLoss,   bar_index, stopLoss,   color=color.new(color.red, 0),   width=1, extend=extend.right, style=line.style_dashed)
+    tpLine    := line.new(bar_index - 60, takeProfit, bar_index, takeProfit, color=color.new(color.green, 0), width=1, extend=extend.right, style=line.style_dashed)
+
+// ---- Open detection: price touches entry level ------------------------------
+touchedEntry = entryPrice > 0 and low <= entryPrice and high >= entryPrice
+
+if enableAlerts and not triggeredOpen and touchedEntry
+    triggeredOpen := true
+    openJson =
+       '{"secret":"' + secretInput +
+       '","action":"open"' +
+       ',"externalId":"' + externalId +
+       '","symbol":"' + syminfo.ticker +
+       '","side":"' + sideJson +
+       '","entry":' + str.tostring(entryPrice) +
+       ',"stopLoss":' + str.tostring(stopLoss) +
+       ',"takeProfit":' + str.tostring(takeProfit) +
+       ',"lots":' + str.tostring(lotsInput) +
+       ',"time":"' + str.format_time(timenow, "yyyy-MM-dd'T'HH:mm:ss'Z'", "UTC") +
+       '","reason":"' + reasonInput +
+       '"}'
+    alert(openJson, alert.freq_once_per_bar)
+
+// ---- Close detection: price touches SL or TP --------------------------------
+hitTp = takeProfit > 0 and (isLong ? high >= takeProfit : low  <= takeProfit)
+hitSl = stopLoss   > 0 and (isLong ? low  <= stopLoss   : high >= stopLoss)
+
+if enableAlerts and triggeredOpen and not triggeredClose and (hitTp or hitSl)
+    triggeredClose := true
+    exitPx     = hitTp ? takeProfit : stopLoss
+    direction  = isLong ? 1.0 : -1.0
+    pnlValue   = (exitPx - entryPrice) * direction * lotsInput * lotMultiplier
+    closeJson  =
+       '{"secret":"' + secretInput +
+       '","action":"close"' +
+       ',"externalId":"' + externalId +
+       '","exitPrice":' + str.tostring(exitPx) +
+       ',"pnl":' + str.tostring(pnlValue) +
+       ',"time":"' + str.format_time(timenow, "yyyy-MM-dd'T'HH:mm:ss'Z'", "UTC") +
+       '"}'
+    alert(closeJson, alert.freq_once_per_bar)
+
+// ---- Status label on chart --------------------------------------------------
+var label statusLabel = na
+if barstate.islast
+    statusText = (not triggeredOpen ? "WAITING" : (not triggeredClose ? "OPEN" : "CLOSED"))
+                  + "  ·  " + sideInput + " · " + str.tostring(lotsInput)
+                  + (externalId != "" ? "\n" + externalId : "")
+    if not na(statusLabel)
+        label.delete(statusLabel)
+    statusLabel := label.new(bar_index, high, statusText,
+         style=label.style_label_down, color=color.new(color.black, 80),
+         textcolor=color.white, size=size.small)

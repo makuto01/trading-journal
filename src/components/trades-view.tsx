@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,11 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  TradeImageManager,
+  type SerializedTradeImage,
+  type TradeImageManagerHandle,
+} from "@/components/trade-image-manager"
 import {
   Select,
   SelectContent,
@@ -49,6 +54,7 @@ export interface SerializedTrade {
   pnl: number | null
   createdAt: string
   updatedAt: string
+  images: SerializedTradeImage[]
 }
 
 type FormState = {
@@ -112,8 +118,10 @@ export function TradesView({ initialTrades }: TradesViewProps) {
   const [, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingImages, setEditingImages] = useState<SerializedTradeImage[]>([])
   const [form, setForm] = useState<FormState>(emptyForm)
   const [submitting, setSubmitting] = useState(false)
+  const imageManagerRef = useRef<TradeImageManagerHandle>(null)
 
   const trades = initialTrades
 
@@ -121,12 +129,14 @@ export function TradesView({ initialTrades }: TradesViewProps) {
 
   function openAddModal() {
     setEditingId(null)
+    setEditingImages([])
     setForm({ ...emptyForm, time: nowLocalForInput() })
     setOpen(true)
   }
 
   function openEditModal(trade: SerializedTrade) {
     setEditingId(trade.id)
+    setEditingImages(trade.images)
     setForm(tradeToForm(trade))
     setOpen(true)
   }
@@ -168,6 +178,19 @@ export function TradesView({ initialTrades }: TradesViewProps) {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body?.error ?? `Request failed (${res.status})`)
+      }
+
+      const savedTrade = (await res.json()) as { id: string }
+
+      // After creating, upload any staged screenshots to the new trade
+      if (!isEdit && imageManagerRef.current?.hasStaged()) {
+        try {
+          await imageManagerRef.current.flushStaged(savedTrade.id)
+        } catch (err: unknown) {
+          const msg =
+            err instanceof Error ? err.message : "Some screenshots failed"
+          toast.error(`Trade saved, but ${msg.toLowerCase()}`)
+        }
       }
 
       toast.success(isEdit ? "Trade updated" : "Trade added")
@@ -248,7 +271,31 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                     })}
                   </TableCell>
                   <TableCell className="font-medium text-neutral-900">
-                    {t.symbol}
+                    <span className="inline-flex items-center gap-1.5">
+                      {t.symbol}
+                      {t.images.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(t)}
+                          className="inline-flex items-center gap-0.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 hover:bg-neutral-200"
+                          title={`${t.images.length} screenshot${t.images.length > 1 ? "s" : ""}`}
+                        >
+                          <svg
+                            width="10"
+                            height="10"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <circle cx="8.5" cy="8.5" r="1.5" />
+                            <path d="m21 15-5-5L5 21" />
+                          </svg>
+                          {t.images.length}
+                        </button>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <span
@@ -495,6 +542,17 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                   placeholder="Breakout above 1.0845 resistance"
                 />
               </Field>
+            </div>
+
+            <div className="col-span-2 mt-2 rounded-lg border border-neutral-200 bg-white p-4">
+              <TradeImageManager
+                ref={imageManagerRef}
+                tradeId={editingId}
+                initialImages={editingImages}
+                onChange={() =>
+                  startTransition(() => router.refresh())
+                }
+              />
             </div>
 
             <DialogFooter className="col-span-2 mt-2">

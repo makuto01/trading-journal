@@ -11,8 +11,8 @@ datasource db {
 }
 
 model Trade {
-  id          String   @id @default(cuid())
-  externalId  String?  @unique
+  id          String       @id @default(cuid())
+  externalId  String?      @unique
   symbol      String
   side        String
   entry       Float
@@ -21,13 +21,25 @@ model Trade {
   lots        Float
   time        DateTime
   reason      String?
-  status      String   @default("OPEN")
+  status      String       @default("OPEN")
   exitPrice   Float?
   pnl         Float?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  images      TradeImage[]
 
   @@index([status])
   @@index([symbol])
   @@index([time])
+}
+
+model TradeImage {
+  id        String   @id @default(cuid())
+  tradeId   String
+  trade     Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  url       String
+  caption   String?
+  createdAt DateTime @default(now())
+
+  @@index([tradeId])
 }

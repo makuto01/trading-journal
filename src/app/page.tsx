@@ -7,6 +7,9 @@ export const dynamic = "force-dynamic"
 export default async function DashboardPage() {
   const trades = await prisma.trade.findMany({
     orderBy: { time: "desc" },
+    include: {
+      images: { orderBy: { createdAt: "asc" } },
+    },
   })
 
   const open = trades.filter((t) => t.status === "OPEN")
@@ -19,6 +22,12 @@ export default async function DashboardPage() {
     time: t.time.toISOString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
+    images: t.images.map((img) => ({
+      id: img.id,
+      url: img.url,
+      caption: img.caption,
+      createdAt: img.createdAt.toISOString(),
+    })),
   }))
 
   return (
