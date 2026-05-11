@@ -1,0 +1,33 @@
+// Trading Journal — Prisma schema
+// Captures TradingView webhook trades (open + close) and manual entries.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Trade {
+  id          String   @id @default(cuid())
+  externalId  String?  @unique
+  symbol      String
+  side        String
+  entry       Float
+  stopLoss    Float
+  takeProfit  Float
+  lots        Float
+  time        DateTime
+  reason      String?
+  status      String   @default("OPEN")
+  exitPrice   Float?
+  pnl         Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([symbol])
+  @@index([time])
+}
