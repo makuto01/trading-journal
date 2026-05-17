@@ -437,7 +437,7 @@ export function TradesView({ initialTrades }: TradesViewProps) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="flex w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:w-full"
+          className="flex max-h-[90svh] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:w-full"
           onPaste={handlePaste}
         >
           {/* Sticky header */}
