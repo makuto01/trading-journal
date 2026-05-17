@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
-import { analyzeImages, type ImageInput } from "@/lib/image-analyzer"
+import { analyzeImages, type ImageInput, type AnthropicLike } from "@/lib/image-analyzer"
+import { createGeminiClient } from "@/lib/gemini-adapter"
 import { calcScore } from "@/lib/scorer"
 import { type CriterionId } from "@/lib/scoring-criteria"
 
@@ -23,9 +24,12 @@ function calcLots(entry: number, stopLoss: number): number {
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.GEMINI_API_KEY
   if (!apiKey) {
-    return Response.json({ error: "ANTHROPIC_API_KEY is not configured" }, { status: 500 })
+    return Response.json(
+      { error: "No API key configured. Set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env." },
+      { status: 500 }
+    )
   }
 
   let formData: FormData
@@ -59,7 +63,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const client = new Anthropic({ apiKey })
+    let client: AnthropicLike
+    if (apiKey.startsWith("sk-ant-")) {
+      client = new Anthropic({ apiKey })
+    } else {
+      client = createGeminiClient(apiKey)
+    }
     const analysis = await analyzeImages(images, client)
     const { score, tier, breakdown } = calcScore(
       analysis.detectedCriteria as Partial<Record<CriterionId, boolean>>
