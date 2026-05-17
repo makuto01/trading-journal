@@ -11,6 +11,9 @@ function makeRepo(overrides: Partial<TradeRepository["trade"]> = {}) {
     status: "OPEN",
     ...args.data,
   }))
+  const findUnique = jest.fn(async (_args: { where: { externalId: string } }) =>
+    null as { id: string; status: string } | null
+  )
   const update = jest.fn(async (args) => ({
     id: "trade_updated_id",
     status: "CLOSED",
@@ -19,11 +22,12 @@ function makeRepo(overrides: Partial<TradeRepository["trade"]> = {}) {
   const repo: TradeRepository = {
     trade: {
       create,
+      findUnique,
       update,
       ...overrides,
     } as TradeRepository["trade"],
   }
-  return { repo, create, update }
+  return { repo, create, findUnique, update }
 }
 
 const validOpenBody = {
@@ -134,6 +138,7 @@ describe("handleWebhook", () => {
     const repo: TradeRepository = {
       trade: {
         create: jest.fn(),
+        findUnique: jest.fn(),
         update,
       } as unknown as TradeRepository["trade"],
     }
@@ -176,5 +181,61 @@ describe("handleWebhook", () => {
     })
     expect(result.status).toBe(200)
     expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  // --- new: Phase 1 additions ---
+
+  test("returns 200 idempotently when open fires with a duplicate externalId", async () => {
+    const uniqueError = Object.assign(new Error("Unique constraint failed."), {
+      code: "P2002",
+    })
+    const create = jest.fn(async () => {
+      throw uniqueError
+    })
+    const findUnique = jest.fn(async () => ({
+      id: "existing_trade_id",
+      status: "OPEN",
+    }))
+    const { repo } = makeRepo({ create, findUnique })
+
+    const result = await handleWebhook({
+      authorizationHeader: `Bearer ${SECRET}`,
+      rawBody: validOpenBody,
+      prisma: repo,
+      secret: SECRET,
+    })
+
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ id: "existing_trade_id", status: "OPEN" })
+    expect(findUnique).toHaveBeenCalledWith({ where: { externalId: "tv-001" } })
+  })
+
+  test("rethrows unexpected (non-P2002) errors from trade create", async () => {
+    const unexpectedError = new Error("Database connection lost")
+    const create = jest.fn(async () => {
+      throw unexpectedError
+    })
+    const { repo } = makeRepo({ create })
+
+    await expect(
+      handleWebhook({
+        authorizationHeader: `Bearer ${SECRET}`,
+        rawBody: validOpenBody,
+        prisma: repo,
+        secret: SECRET,
+      })
+    ).rejects.toThrow("Database connection lost")
+  })
+
+  test("rejects with 401 when secret has wrong length (constant-time path)", async () => {
+    const { repo, create } = makeRepo()
+    const result = await handleWebhook({
+      authorizationHeader: "Bearer short",
+      rawBody: validOpenBody,
+      prisma: repo,
+      secret: SECRET,
+    })
+    expect(result.status).toBe(401)
+    expect(create).not.toHaveBeenCalled()
   })
 })

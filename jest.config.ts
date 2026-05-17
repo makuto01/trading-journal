@@ -9,21 +9,30 @@ const config: Config = {
   },
   transform: {
     "^.+\\.(t|j)sx?$": [
-      "@swc/jest",
+      "ts-jest",
       {
-        jsc: {
-          parser: { syntax: "typescript", tsx: false, decorators: false },
-          target: "es2022",
-          baseUrl: ".",
+        tsconfig: {
           paths: { "@/*": ["src/*"] },
         },
-        module: { type: "commonjs" },
       },
     ],
   },
   // Don't try to transform the generated Prisma client during webhook
   // handler tests — we mock the repository surface instead.
   transformIgnorePatterns: ["/node_modules/", "/src/generated/"],
+  collectCoverageFrom: [
+    "src/lib/**/*.ts",
+    "src/app/api/**/*.ts",
+    "!src/generated/**",
+  ],
+  coverageThreshold: {
+    global: {
+      lines: 80,
+      branches: 80,
+      functions: 80,
+      statements: 80,
+    },
+  },
 }
 
 export default config
