@@ -10,6 +10,8 @@ A fully automated trading journal that ingests TradingView webhook alerts, calcu
 - **Equity curve** — SVG sparkline showing cumulative PnL over time
 - **Paginated trade list** — filter by status, symbol, and date range; CSV export
 - **Screenshots per trade** — paste, drag, or pick image files; stored on disk, viewable in a lightbox
+- **Claude Vision image analysis** — paste TradingView screenshots to auto-fill Symbol, Side, Entry, Lots, SL, TP, and Time; scored instantly against the S-Tier checklist
+- **S-Tier scoring** — 12-criteria evaluation (SMC + Fibonacci OTE + FRVP); assigns Tier S/A/B/C/D/F and score 1–10 with a full breakdown visible in the trade modal
 - **Auto-capture from limit orders** — Pine Script "Limit Order Mirror" turns chart levels into webhooks
 - **Manual CRUD** — add, edit, and delete trades directly from the UI
 - **SQLite storage** — zero-config local database, Prisma-managed
@@ -37,9 +39,12 @@ cp .env.example .env
 ```env
 DATABASE_URL="file:./prisma/dev.db"
 WEBHOOK_SECRET="your-secret-here"
+ANTHROPIC_API_KEY="sk-ant-..."      # Required for image analysis feature
 ```
 
 Pick any strong random string for `WEBHOOK_SECRET`. You will paste it into TradingView alert settings.
+
+`ANTHROPIC_API_KEY` is required only if you use the **Analyze Screenshots** feature. Get one at https://console.anthropic.com. The app starts without it — the analyze button returns a 500 if the key is missing.
 
 ### 3. Create the database
 
@@ -154,6 +159,63 @@ The dashboard calculates the following metrics across all closed trades:
 The equity curve SVG sparkline visualizes cumulative PnL over time — green if net positive, red if net negative.
 
 Filter analytics by date range and symbol via `GET /api/analytics`.
+
+---
+
+## Image Analysis
+
+Paste up to 3 TradingView screenshots (30M / 5M / 1M timeframes with Fibonacci, FRVP, and FVG boxes drawn) directly into the **Add Trade** modal. Claude Vision reads the charts and:
+
+1. **Auto-fills** Symbol, Side, Entry, Stop Loss, Take Profit, Lots, and Time
+2. **Scores** the setup against the S-Tier checklist (see [Scoring](#scoring) below)
+
+### How to use
+
+1. Click **Add Trade**
+2. Open TradingView and take your screenshots (Ctrl+Alt+S copies to clipboard)
+3. Paste (**Ctrl+V**) inside the modal, or drag-and-drop image files onto the upload zone
+4. Click **Analyze** — fields fill in and a score badge appears
+5. Review and adjust any field, then click **Add trade**
+
+The `ANTHROPIC_API_KEY` environment variable must be set. Lots are calculated automatically from:
+
+```
+lots = (account_size × risk_pct) / (|entry - sl| × lot_multiplier)
+```
+
+Defaults: `DEFAULT_ACCOUNT_SIZE=10000`, `DEFAULT_RISK_PCT=1.5`, `DEFAULT_LOT_MULTIPLIER=100000`. Override in `.env`.
+
+---
+
+## Scoring
+
+Every analyzed trade receives a **Tier** and a **1–10 score** based on 12 S-Tier criteria across 4 phases:
+
+| Phase | Criteria |
+|-------|----------|
+| 1 — Trap & Timing (M5) | Time inside London/NY Killzone; Liquidity sweep below/above swing |
+| 2 — Shift (M5/M1) | Strong displacement candles; Market Structure Shift; **Fair Value Gap** *(hard rule)* |
+| 3 — Confluence (math) | Fibonacci anchored on bodies; FRVP on same leg; FRVP at 40% Core; OTE + FVG + FRVP overlap |
+| 4 — Entry Trigger (M1) | Price retraced into zone; Engulfing or Pin Bar confirmation; Market order on close |
+
+**Tier mapping:**
+
+| Criteria passed | Score | Tier |
+|-----------------|-------|------|
+| 12 | 10 | S |
+| 11 | 9 | A |
+| 10 | 8 | A |
+| 9 | 7 | B |
+| 8 | 6 | B |
+| 7 | 5 | C |
+| 6 | 4 | C |
+| 5 | 3 | D |
+| 4 | 2 | D |
+| < 4 | 1 | F |
+
+**FVG Hard Rule:** if the Fair Value Gap criterion fails, the score is capped at **5 / D** regardless of how many other criteria pass.
+
+The score badge (e.g. `S · 10/10`) is visible on every row in the trade table. Click **Edit** to see the full criterion-by-criterion breakdown.
 
 ---
 
@@ -292,6 +354,22 @@ Partially update any trade field. Body: any subset of trade fields.
 
 Delete a trade by ID. Cascades to attached screenshots.
 
+### `POST /api/analyze-image`
+
+Accepts up to 3 TradingView chart screenshots and returns extracted trade fields + S-Tier score.
+
+Content-Type: `multipart/form-data`, field name: `files[]`.
+
+```json
+{
+  "extracted": { "symbol": "EURUSD", "side": "BUY", "entry": 1.085, "sl": 1.082, "tp": 1.092, "lots": 0.14, "time": "2026-05-17T10:30:00Z" },
+  "scoring": { "score": 9, "tier": "A", "breakdown": { "timeCheck": true, "fvg": true, ... } },
+  "autoFilled": true
+}
+```
+
+Returns 400 for unsupported types or > 3 files. Returns 500 if `ANTHROPIC_API_KEY` is not set.
+
 ### `GET /api/analytics`
 
 Returns trading metrics calculated across closed trades.
@@ -345,7 +423,7 @@ Delete a single screenshot (removes file from disk and row from DB).
 | `npm run dev` | Start development server |
 | `npm run build` | Production build |
 | `npm start` | Run production build |
-| `npm test` | Run unit tests (37 tests) |
+| `npm test` | Run unit tests (63 tests) |
 | `npm run test:watch` | Watch mode for tests |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:studio` | Open Prisma Studio (visual DB browser) |
@@ -376,11 +454,16 @@ src/
 │   ├── stats-cards.tsx                    # 8-metric analytics dashboard
 │   ├── trade-filters.tsx                  # Symbol/status/date filters + CSV link
 │   ├── trade-pagination.tsx               # Prev/next + page indicator
-│   ├── trades-view.tsx                    # Trade table + add/edit modal
+│   ├── trades-view.tsx                    # Trade table + add/edit modal + analyze screenshots
 │   ├── trade-image-manager.tsx            # Paste/drop/pick + thumbnail grid + lightbox
+│   ├── score-badge.tsx                    # Tier · score/10 badge (S=gold, A=green, …)
+│   ├── score-breakdown.tsx                # Collapsible 12-criterion breakdown panel
 │   └── ui/                                # shadcn UI primitives
 └── lib/
-    ├── analytics.ts                        # calcAnalytics() — pure function, 11 metrics
+    ├── analytics.ts                        # calcAnalytics() — pure function, 13 metrics incl. avgScore + tierDistribution
+    ├── image-analyzer.ts                   # analyzeImages() — Claude Vision, Zod-validated output
+    ├── scorer.ts                           # calcScore() — pure S-Tier scorer with FVG hard rule
+    ├── scoring-criteria.ts                 # 12 criteria definitions with IDs, phases, labels
     ├── prisma.ts                           # Prisma singleton
     ├── uploads.ts                          # File-save + delete helpers (5MB cap)
     ├── webhook-schema.ts                   # Zod validation schemas
@@ -388,8 +471,10 @@ src/
 
 src/__tests__/
 ├── webhook-handler.test.ts                # 10 tests: auth, open, close, idempotency
-├── analytics.test.ts                      # 15 tests: all metrics + edge cases
-└── trades-api.test.ts                     # 12 tests: GET pagination, POST, PATCH, DELETE
+├── analytics.test.ts                      # 19 tests: all metrics + avgScore + tierDistribution
+├── trades-api.test.ts                     # 12 tests: GET pagination, POST, PATCH, DELETE
+├── scorer.test.ts                         # 15 tests: tier boundaries, FVG hard rule, breakdown
+└── image-analyzer.test.ts                 # 7 tests: multi-image, parse, Zod validation, errors
 
 docs/
 └── tradingview/
@@ -407,13 +492,15 @@ public/
 npm test
 ```
 
-37 tests across three suites — all run in under 1 second with no database or network required:
+63 tests across five suites — all run in under 1 second with no database or network required:
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | `webhook-handler.test.ts` | 10 | Auth, open, close, idempotency, error handling |
-| `analytics.test.ts` | 15 | All 11 metrics, edge cases (no trades, no losses) |
+| `analytics.test.ts` | 19 | All 13 metrics, avgScore, tierDistribution edge cases |
 | `trades-api.test.ts` | 12 | GET pagination/filtering, POST, PATCH 404, DELETE 404 |
+| `scorer.test.ts` | 15 | All tier boundaries, FVG hard rule, empty detection, breakdown |
+| `image-analyzer.test.ts` | 7 | Multi-image, JSON parse, Zod validation, error paths |
 
 Coverage thresholds (80%) are enforced on `src/lib/**` and `src/app/api/**`. CI runs on every push and pull request.
 
