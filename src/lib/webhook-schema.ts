@@ -47,10 +47,14 @@ export type CloseWebhookPayload = z.infer<typeof closeWebhookSchema>
 export type WebhookPayload = z.infer<typeof webhookSchema>
 
 // Manual create/update schemas reused by /api/trades.
-export const manualCreateSchema = openWebhookSchema.omit({
-  action: true,
-  secret: true,
-})
+export const manualCreateSchema = openWebhookSchema
+  .omit({ action: true, secret: true })
+  .extend({
+    score: z.number().int().min(1).max(10).optional(),
+    tier: z.enum(["S", "A", "B", "C", "D", "F"]).optional(),
+    scoreBreakdown: z.string().optional(),
+    autoFilled: z.boolean().optional(),
+  })
 
 export const manualUpdateSchema = z
   .object({

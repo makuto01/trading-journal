@@ -30,6 +30,7 @@ const config = {
     "!src/app/api/trades/export/route.ts",
     "!src/app/api/trades/[id]/images/route.ts",
     "!src/app/api/trades/[id]/images/[imageId]/route.ts",
+    "!src/app/api/analyze-image/route.ts",
   ],
   coverageThreshold: {
     global: {
