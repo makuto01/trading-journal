@@ -35,7 +35,7 @@ export function TradeFilters() {
   const exportHref = `/api/trades/export${exportParams.size ? `?${exportParams}` : ""}`
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <Input
         className="h-8 w-36 text-sm"
         placeholder="Symbol…"

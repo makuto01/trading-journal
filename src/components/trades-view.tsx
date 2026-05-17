@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react"
+import { Suspense, useCallback, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -39,6 +39,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
+import { TradeFilters } from "@/components/trade-filters"
 
 export interface SerializedTrade {
   id: string
@@ -306,29 +307,35 @@ export function TradesView({ initialTrades }: TradesViewProps) {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-lg font-semibold tracking-tight text-neutral-900">Ledger</h2>
-        <Button onClick={openAddModal} className="bg-neutral-900 text-white hover:bg-neutral-800">
-          + Add trade
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Suspense>
+            <TradeFilters />
+          </Suspense>
+          <Button onClick={openAddModal} className="bg-neutral-900 text-white hover:bg-neutral-800 shrink-0">
+            + Add trade
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-neutral-50/80 hover:bg-neutral-50/80">
-              <TableHead className="w-[140px]">Time</TableHead>
+              <TableHead className="w-[120px]">Time</TableHead>
               <TableHead>Symbol</TableHead>
               <TableHead>Side</TableHead>
               <TableHead className="text-right">Entry</TableHead>
-              <TableHead className="text-right">SL</TableHead>
-              <TableHead className="text-right">TP</TableHead>
-              <TableHead className="text-right">Lots</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">SL</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">TP</TableHead>
+              <TableHead className="hidden text-right md:table-cell">Lots</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Exit</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">Exit</TableHead>
               <TableHead className="text-right">PnL</TableHead>
               <TableHead>Score</TableHead>
-              <TableHead className="w-[120px] text-right">Actions</TableHead>
+              <TableHead className="w-[100px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -378,9 +385,9 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                     </span>
                   </TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{t.entry}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">{t.stopLoss}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">{t.takeProfit}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">{t.lots}</TableCell>
+                  <TableCell className="hidden text-right font-mono tabular-nums text-neutral-500 sm:table-cell">{t.stopLoss}</TableCell>
+                  <TableCell className="hidden text-right font-mono tabular-nums text-neutral-500 sm:table-cell">{t.takeProfit}</TableCell>
+                  <TableCell className="hidden text-right font-mono tabular-nums md:table-cell">{t.lots}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={cn(
                       "border-transparent",
@@ -389,7 +396,7 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                       {t.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">
+                  <TableCell className="hidden text-right font-mono tabular-nums text-neutral-500 sm:table-cell">
                     {t.exitPrice ?? "—"}
                   </TableCell>
                   <TableCell className={cn(
@@ -408,7 +415,7 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <div className="flex justify-end gap-1 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                       <Button size="sm" variant="ghost" onClick={() => openEditModal(t)}>Edit</Button>
                       <Button
                         size="sm"
@@ -425,11 +432,16 @@ export function TradesView({ initialTrades }: TradesViewProps) {
             )}
           </TableBody>
         </Table>
+        </div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-2xl" onPaste={handlePaste}>
-          <DialogHeader>
+        <DialogContent
+          className="flex w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:w-full"
+          onPaste={handlePaste}
+        >
+          {/* Sticky header */}
+          <DialogHeader className="shrink-0 border-b border-neutral-100 px-6 pb-4 pt-6">
             <DialogTitle>{editingId === null ? "Add trade" : "Edit trade"}</DialogTitle>
             <DialogDescription>
               {editingId === null
@@ -438,164 +450,173 @@ export function TradesView({ initialTrades }: TradesViewProps) {
             </DialogDescription>
           </DialogHeader>
 
-          {editingId === null && (
-            <div
-              ref={dropZoneRef}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              className={cn(
-                "flex min-h-[72px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-neutral-200 bg-neutral-50 px-4 py-3 text-center transition-colors hover:border-neutral-300 hover:bg-neutral-100",
-                analyzing && "cursor-wait opacity-70"
-              )}
-              onClick={() => !analyzing && fileInputRef.current?.click()}
+          {/* Scrollable body */}
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            {editingId === null && (
+              <div
+                ref={dropZoneRef}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+                className={cn(
+                  "flex min-h-[72px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-neutral-200 bg-neutral-50 px-4 py-3 text-center transition-colors hover:border-neutral-300 hover:bg-neutral-100",
+                  analyzing && "cursor-wait opacity-70"
+                )}
+                onClick={() => !analyzing && fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? [])
+                    void analyzeScreenshots(files)
+                    e.target.value = ""
+                  }}
+                />
+                {analyzing ? (
+                  <span className="text-xs text-neutral-500">Analyzing screenshots…</span>
+                ) : (
+                  <>
+                    <svg className="mb-1 h-5 w-5 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <p className="text-xs font-medium text-neutral-600">Paste or drop TradingView screenshots</p>
+                    <p className="text-[10px] text-neutral-400">Up to 3 images · auto-fills fields</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {pendingScoring && (
+              <ScoreBreakdown
+                tier={pendingScoring.tier}
+                score={pendingScoring.score}
+                breakdown={pendingScoring.breakdown}
+              />
+            )}
+
+            <form
+              id="trade-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void submit()
+              }}
+              className="grid grid-cols-1 gap-4 sm:grid-cols-2"
             >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const files = Array.from(e.target.files ?? [])
-                  void analyzeScreenshots(files)
-                  e.target.value = ""
-                }}
-              />
-              {analyzing ? (
-                <span className="text-xs text-neutral-500">Analyzing screenshots with Claude Vision…</span>
-              ) : (
-                <>
-                  <svg className="mb-1 h-5 w-5 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" y1="3" x2="12" y2="15" />
-                  </svg>
-                  <p className="text-xs font-medium text-neutral-600">Paste or drop TradingView screenshots</p>
-                  <p className="text-[10px] text-neutral-400">Up to 3 images (PNG, JPEG, WebP) · Claude Vision auto-fills fields</p>
-                </>
-              )}
-            </div>
-          )}
+              <Field label="Symbol" id="symbol">
+                <Input
+                  id="symbol"
+                  required
+                  value={form.symbol}
+                  onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })}
+                  placeholder="EURUSD"
+                />
+              </Field>
 
-          {pendingScoring && (
-            <ScoreBreakdown
-              tier={pendingScoring.tier}
-              score={pendingScoring.score}
-              breakdown={pendingScoring.breakdown}
-              defaultOpen
-            />
-          )}
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              void submit()
-            }}
-            className="grid grid-cols-2 gap-4"
-          >
-            <Field label="Symbol" id="symbol">
-              <Input
-                id="symbol"
-                required
-                value={form.symbol}
-                onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })}
-                placeholder="EURUSD"
-              />
-            </Field>
-
-            <Field label="Side" id="side">
-              <Select value={form.side} onValueChange={(v) => setForm({ ...form, side: v as "BUY" | "SELL" })}>
-                <SelectTrigger id="side"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="BUY">BUY</SelectItem>
-                  <SelectItem value="SELL">SELL</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Entry" id="entry">
-              <Input id="entry" type="number" step="any" required value={form.entry}
-                onChange={(e) => setForm({ ...form, entry: e.target.value })} />
-            </Field>
-
-            <Field label="Lots" id="lots">
-              <Input id="lots" type="number" step="any" required value={form.lots}
-                onChange={(e) => setForm({ ...form, lots: e.target.value })} />
-            </Field>
-
-            <Field label="Stop loss" id="stopLoss">
-              <Input id="stopLoss" type="number" step="any" required value={form.stopLoss}
-                onChange={(e) => setForm({ ...form, stopLoss: e.target.value })} />
-            </Field>
-
-            <Field label="Take profit" id="takeProfit">
-              <Input id="takeProfit" type="number" step="any" required value={form.takeProfit}
-                onChange={(e) => setForm({ ...form, takeProfit: e.target.value })} />
-            </Field>
-
-            <Field label="Time" id="time">
-              <Input id="time" type="datetime-local" required value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })} />
-            </Field>
-
-            {editingId !== null && (
-              <Field label="Status" id="status">
-                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v as "OPEN" | "CLOSED" })}>
-                  <SelectTrigger id="status"><SelectValue /></SelectTrigger>
+              <Field label="Side" id="side">
+                <Select value={form.side} onValueChange={(v) => setForm({ ...form, side: v as "BUY" | "SELL" })}>
+                  <SelectTrigger id="side"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="OPEN">OPEN</SelectItem>
-                    <SelectItem value="CLOSED">CLOSED</SelectItem>
+                    <SelectItem value="BUY">BUY</SelectItem>
+                    <SelectItem value="SELL">SELL</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
-            )}
 
-            {editingId !== null && (
-              <>
-                <Field label="Exit price" id="exitPrice">
-                  <Input id="exitPrice" type="number" step="any" value={form.exitPrice}
-                    onChange={(e) => setForm({ ...form, exitPrice: e.target.value })} placeholder="—" />
-                </Field>
-                <Field label="PnL" id="pnl">
-                  <Input id="pnl" type="number" step="any" value={form.pnl}
-                    onChange={(e) => setForm({ ...form, pnl: e.target.value })} placeholder="—" />
-                </Field>
-              </>
-            )}
-
-            <div className="col-span-2">
-              <Field label="Reason" id="reason">
-                <Textarea id="reason" rows={2} value={form.reason}
-                  onChange={(e) => setForm({ ...form, reason: e.target.value })}
-                  placeholder="Breakout above 1.0845 resistance" />
+              <Field label="Entry" id="entry">
+                <Input id="entry" type="number" step="any" required value={form.entry}
+                  onChange={(e) => setForm({ ...form, entry: e.target.value })} />
               </Field>
-            </div>
 
-            <div className="col-span-2 mt-2 rounded-lg border border-neutral-200 bg-white p-4">
-              <TradeImageManager
-                ref={imageManagerRef}
-                tradeId={editingId}
-                initialImages={editingImages}
-                onChange={() => startTransition(() => router.refresh())}
-              />
-            </div>
+              <Field label="Lots" id="lots">
+                <Input id="lots" type="number" step="any" required value={form.lots}
+                  onChange={(e) => setForm({ ...form, lots: e.target.value })} />
+              </Field>
 
-            <DialogFooter className="col-span-2 mt-2">
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={submitting} className="bg-neutral-900 text-white hover:bg-neutral-800">
-                {submitting ? "Saving…" : editingId === null ? "Add trade" : "Save changes"}
-              </Button>
-            </DialogFooter>
-          </form>
+              <Field label="Stop loss" id="stopLoss">
+                <Input id="stopLoss" type="number" step="any" required value={form.stopLoss}
+                  onChange={(e) => setForm({ ...form, stopLoss: e.target.value })} />
+              </Field>
+
+              <Field label="Take profit" id="takeProfit">
+                <Input id="takeProfit" type="number" step="any" required value={form.takeProfit}
+                  onChange={(e) => setForm({ ...form, takeProfit: e.target.value })} />
+              </Field>
+
+              <Field label="Time" id="time" className="sm:col-span-2">
+                <Input id="time" type="datetime-local" required value={form.time}
+                  onChange={(e) => setForm({ ...form, time: e.target.value })} />
+              </Field>
+
+              {editingId !== null && (
+                <Field label="Status" id="status">
+                  <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v as "OPEN" | "CLOSED" })}>
+                    <SelectTrigger id="status"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="OPEN">OPEN</SelectItem>
+                      <SelectItem value="CLOSED">CLOSED</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+
+              {editingId !== null && (
+                <>
+                  <Field label="Exit price" id="exitPrice">
+                    <Input id="exitPrice" type="number" step="any" value={form.exitPrice}
+                      onChange={(e) => setForm({ ...form, exitPrice: e.target.value })} placeholder="—" />
+                  </Field>
+                  <Field label="PnL" id="pnl">
+                    <Input id="pnl" type="number" step="any" value={form.pnl}
+                      onChange={(e) => setForm({ ...form, pnl: e.target.value })} placeholder="—" />
+                  </Field>
+                </>
+              )}
+
+              <div className="sm:col-span-2">
+                <Field label="Reason" id="reason">
+                  <Textarea id="reason" rows={2} value={form.reason}
+                    onChange={(e) => setForm({ ...form, reason: e.target.value })}
+                    placeholder="Breakout above 1.0845 resistance" />
+                </Field>
+              </div>
+
+              <div className="rounded-lg border border-neutral-200 bg-white p-4 sm:col-span-2">
+                <TradeImageManager
+                  ref={imageManagerRef}
+                  tradeId={editingId}
+                  initialImages={editingImages}
+                  onChange={() => startTransition(() => router.refresh())}
+                />
+              </div>
+            </form>
+          </div>
+
+          {/* Sticky footer — always visible */}
+          <div className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-6 py-4">
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              type="submit"
+              form="trade-form"
+              disabled={submitting}
+              className="bg-neutral-900 text-white hover:bg-neutral-800"
+            >
+              {submitting ? "Saving…" : editingId === null ? "Add trade" : "Save changes"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </>
   )
 }
 
-function Field({ label, id, children }: { label: string; id: string; children: React.ReactNode }) {
+function Field({ label, id, children, className }: { label: string; id: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={cn("flex flex-col gap-1.5", className)}>
       <Label htmlFor={id} className="text-xs font-medium text-neutral-700">{label}</Label>
       {children}
     </div>

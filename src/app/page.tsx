@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma"
 import { TradesView } from "@/components/trades-view"
 import { StatsCards } from "@/components/stats-cards"
 import { EquityCurve } from "@/components/equity-curve"
-import { TradeFilters } from "@/components/trade-filters"
 import { TradePagination, type PaginationMeta } from "@/components/trade-pagination"
 import { calcAnalytics, type ClosedTrade } from "@/lib/analytics"
 
@@ -107,15 +106,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       )}
 
       <section className="mt-10">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-            Ledger
-          </h2>
-          <Suspense>
-            <TradeFilters />
-          </Suspense>
-        </div>
-
         <TradesView initialTrades={serialized} />
 
         <Suspense>
