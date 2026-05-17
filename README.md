@@ -1,16 +1,20 @@
 # Trading Journal
 
-A lightweight, fully automated trading journal that ingests TradingView webhook alerts and provides a dashboard for reviewing and manually editing trades.
+A fully automated trading journal that ingests TradingView webhook alerts, calculates trading analytics, and provides a dashboard for reviewing and editing trades.
 
 ## Features
 
 - **Automatic trade capture** — TradingView alerts hit `POST /api/webhook` to open or close trades
-- **Dashboard** — view all trades, filter by status, see stats (total PnL, win rate)
-- **Manual CRUD** — add, edit, and delete trades directly from the UI
+- **Idempotent webhook handling** — duplicate open signals (TradingView retries) are safely ignored
+- **Analytics dashboard** — win rate, profit factor, expectancy, avg W/L ratio, max drawdown, current streak
+- **Equity curve** — SVG sparkline showing cumulative PnL over time
+- **Paginated trade list** — filter by status, symbol, and date range; CSV export
 - **Screenshots per trade** — paste, drag, or pick image files; stored on disk, viewable in a lightbox
-- **Auto-capture from limit orders** — Pine Script "Limit Order Mirror" turns chart levels into webhooks; supports multiple concurrent positions
+- **Auto-capture from limit orders** — Pine Script "Limit Order Mirror" turns chart levels into webhooks
+- **Manual CRUD** — add, edit, and delete trades directly from the UI
 - **SQLite storage** — zero-config local database, Prisma-managed
 - **Dual auth** — Bearer token header *or* body `secret` field (works with TradingView Free tier)
+- **CI** — GitHub Actions: typecheck → test (80% coverage) → build on every push
 
 ---
 
@@ -100,6 +104,8 @@ Set the **Alert Message** body to JSON. TradingView Free tier cannot send custom
 
 **`externalId`** links the open and close. Use `{{strategy.order.id}}` from Pine Script or any stable unique string per trade.
 
+Duplicate `open` signals for the same `externalId` are silently ignored — safe for TradingView's retry behaviour.
+
 ### Field reference
 
 | Field | Required for | Type | Description |
@@ -130,9 +136,44 @@ The `secret` field in the body is then optional.
 
 ---
 
+## Analytics
+
+The dashboard calculates the following metrics across all closed trades:
+
+| Metric | Description |
+|--------|-------------|
+| Total trades | Closed trade count |
+| Win rate | % of trades with PnL > 0 |
+| Profit factor | Gross profit ÷ gross loss |
+| Realized PnL | Sum of all closed PnL |
+| Expectancy | Average PnL per trade |
+| Avg W/L ratio | Average win size ÷ average loss size |
+| Max drawdown | Largest peak-to-trough equity drop |
+| Current streak | Consecutive wins (+N) or losses (−N) |
+
+The equity curve SVG sparkline visualizes cumulative PnL over time — green if net positive, red if net negative.
+
+Filter analytics by date range and symbol via `GET /api/analytics`.
+
+---
+
 ## Manual Trade Entry
 
 Click **Add Trade** on the dashboard to create a trade manually. Click the pencil icon on any row to edit it. All fields are editable at any time.
+
+---
+
+## Filtering and Export
+
+The trade list supports server-side filtering:
+
+- **Symbol** — free text, case-insensitive substring match
+- **Status** — All / Open / Closed
+- **Date range** — from/to filter applied to trade open time
+
+Pagination controls appear at the bottom (default 20 trades per page).
+
+Click **Export CSV** to download all trades matching the current filters as a CSV file (`GET /api/trades/export`).
 
 ---
 
@@ -219,10 +260,24 @@ Accepts open or close payloads. Returns:
 
 ### `GET /api/trades`
 
-Returns all trades ordered by time descending.
+Returns a paginated list of trades.
+
+**Query params:**
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `page` | `1` | Page number |
+| `limit` | `20` | Trades per page |
+| `status` | — | `OPEN` or `CLOSED` |
+| `symbol` | — | Case-insensitive substring filter |
+| `from` | — | ISO 8601 start date (inclusive) |
+| `to` | — | ISO 8601 end date (inclusive) |
 
 ```json
-{ "trades": [ { "id": "...", "symbol": "EURUSD", "status": "CLOSED", ... } ] }
+{
+  "trades": [ { "id": "...", "symbol": "EURUSD", "status": "CLOSED", ... } ],
+  "meta": { "total": 142, "page": 1, "limit": 20, "totalPages": 8 }
+}
 ```
 
 ### `POST /api/trades`
@@ -236,6 +291,34 @@ Partially update any trade field. Body: any subset of trade fields.
 ### `DELETE /api/trades/:id`
 
 Delete a trade by ID. Cascades to attached screenshots.
+
+### `GET /api/analytics`
+
+Returns trading metrics calculated across closed trades.
+
+**Query params:** `from`, `to`, `symbol` (all optional).
+
+```json
+{
+  "totalTrades": 50,
+  "winRate": 0.62,
+  "profitFactor": 1.84,
+  "totalPnl": 1240.50,
+  "expectancy": 24.81,
+  "avgWinLossRatio": 1.42,
+  "maxDrawdown": -320.00,
+  "currentStreak": 3,
+  "equityCurve": [0, 40, 15, 80, ...]
+}
+```
+
+### `GET /api/trades/export`
+
+Streams all closed trades as a downloadable CSV file.
+
+**Query params:** `from`, `to` (optional date range).
+
+Response: `Content-Type: text/csv`, `Content-Disposition: attachment; filename="trades.csv"`.
 
 ### `GET /api/trades/:id/images`
 
@@ -262,7 +345,7 @@ Delete a single screenshot (removes file from disk and row from DB).
 | `npm run dev` | Start development server |
 | `npm run build` | Production build |
 | `npm start` | Run production build |
-| `npm test` | Run unit tests |
+| `npm test` | Run unit tests (37 tests) |
 | `npm run test:watch` | Watch mode for tests |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:studio` | Open Prisma Studio (visual DB browser) |
@@ -275,33 +358,45 @@ Delete a single screenshot (removes file from disk and row from DB).
 ```
 src/
 ├── app/
-│   ├── page.tsx                          # Dashboard (server component)
+│   ├── page.tsx                            # Dashboard (server component, paginated)
 │   └── api/
-│       ├── webhook/route.ts              # TradingView webhook receiver
+│       ├── webhook/route.ts                # TradingView webhook receiver
+│       ├── analytics/route.ts              # GET /api/analytics
 │       └── trades/
-│           ├── route.ts                  # GET, POST
+│           ├── route.ts                    # GET (paginated + filtered), POST
+│           ├── export/route.ts             # GET /api/trades/export → CSV
 │           └── [id]/
-│               ├── route.ts              # PATCH, DELETE
+│               ├── route.ts                # PATCH, DELETE
 │               └── images/
-│                   ├── route.ts          # GET, POST (upload)
-│                   └── [imageId]/route.ts # DELETE
+│                   ├── route.ts            # GET, POST (upload)
+│                   └── [imageId]/route.ts  # DELETE
 ├── components/
-│   ├── stats-cards.tsx                   # PnL, win rate, open/closed counts
-│   ├── trades-view.tsx                   # Trade table + add/edit modal
-│   ├── trade-image-manager.tsx           # Paste/drop/pick + thumbnail grid + lightbox
-│   └── ui/                               # shadcn UI primitives
+│   ├── analytics/
+│   │   └── equity-curve.tsx               # SVG sparkline (dependency-free)
+│   ├── stats-cards.tsx                    # 8-metric analytics dashboard
+│   ├── trade-filters.tsx                  # Symbol/status/date filters + CSV link
+│   ├── trade-pagination.tsx               # Prev/next + page indicator
+│   ├── trades-view.tsx                    # Trade table + add/edit modal
+│   ├── trade-image-manager.tsx            # Paste/drop/pick + thumbnail grid + lightbox
+│   └── ui/                                # shadcn UI primitives
 └── lib/
-    ├── prisma.ts                         # Prisma singleton
-    ├── uploads.ts                        # File-save + delete helpers (5MB cap)
-    ├── webhook-schema.ts                 # Zod validation schemas
-    └── webhook-handler.ts                # Pure handler (unit-testable)
+    ├── analytics.ts                        # calcAnalytics() — pure function, 11 metrics
+    ├── prisma.ts                           # Prisma singleton
+    ├── uploads.ts                          # File-save + delete helpers (5MB cap)
+    ├── webhook-schema.ts                   # Zod validation schemas
+    └── webhook-handler.ts                  # Pure handler (unit-testable, idempotent)
+
+src/__tests__/
+├── webhook-handler.test.ts                # 10 tests: auth, open, close, idempotency
+├── analytics.test.ts                      # 15 tests: all metrics + edge cases
+└── trades-api.test.ts                     # 12 tests: GET pagination, POST, PATCH, DELETE
 
 docs/
 └── tradingview/
-    └── limit-order-mirror.pine           # Pine Script auto-capture indicator
+    └── limit-order-mirror.pine            # Pine Script auto-capture indicator
 
 public/
-└── uploads/trades/{tradeId}/{cuid}.{ext} # User screenshots (gitignored)
+└── uploads/trades/{tradeId}/{cuid}.{ext}  # User screenshots (gitignored)
 ```
 
 ---
@@ -312,9 +407,15 @@ public/
 npm test
 ```
 
-7 unit tests cover the webhook handler: open, close, auth via header, auth via body, wrong secret, unknown externalId (→ 404), and schema validation failure.
+37 tests across three suites — all run in under 1 second with no database or network required:
 
-Tests run in ~1 second with no database or network required.
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| `webhook-handler.test.ts` | 10 | Auth, open, close, idempotency, error handling |
+| `analytics.test.ts` | 15 | All 11 metrics, edge cases (no trades, no losses) |
+| `trades-api.test.ts` | 12 | GET pagination/filtering, POST, PATCH 404, DELETE 404 |
+
+Coverage thresholds (80%) are enforced on `src/lib/**` and `src/app/api/**`. CI runs on every push and pull request.
 
 ---
 
