@@ -26,7 +26,11 @@ model Trade {
   pnl         Float?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  images      TradeImage[]
+  images         TradeImage[]
+  score          Int?
+  tier           String?
+  scoreBreakdown String?
+  autoFilled     Boolean      @default(false)
 
   @@index([status])
   @@index([symbol])
