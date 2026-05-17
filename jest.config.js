@@ -1,6 +1,5 @@
-import type { Config } from "jest"
-
-const config: Config = {
+/** @type {import('jest').Config} */
+const config = {
   testEnvironment: "node",
   moduleFileExtensions: ["ts", "tsx", "js", "json"],
   testMatch: ["<rootDir>/src/__tests__/**/*.test.ts"],
@@ -17,8 +16,6 @@ const config: Config = {
       },
     ],
   },
-  // Don't try to transform the generated Prisma client during webhook
-  // handler tests — we mock the repository surface instead.
   transformIgnorePatterns: ["/node_modules/", "/src/generated/"],
   collectCoverageFrom: [
     "src/lib/**/*.ts",
@@ -35,4 +32,4 @@ const config: Config = {
   },
 }
 
-export default config
+module.exports = config
