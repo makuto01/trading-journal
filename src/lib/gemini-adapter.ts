@@ -8,7 +8,7 @@ export function createGeminiClient(apiKey: string): AnthropicLike {
     messages: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       async create(params: any): Promise<AnthropicMessage> {
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
 
         const systemText: string = params.system?.[0]?.text ?? ""
         const userContent: Array<{ type: string; source?: { type: string; media_type: string; data: string }; text?: string }> =
