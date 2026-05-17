@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState, useTransition } from "react"
+import { useCallback, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { ScoreBadge } from "@/components/score-badge"
+import { ScoreBreakdown } from "@/components/score-breakdown"
 import {
   TradeImageManager,
   type SerializedTradeImage,
@@ -52,6 +54,10 @@ export interface SerializedTrade {
   status: string
   exitPrice: number | null
   pnl: number | null
+  score: number | null
+  tier: string | null
+  scoreBreakdown: string | null
+  autoFilled: boolean
   createdAt: string
   updatedAt: string
   images: SerializedTradeImage[]
@@ -69,6 +75,12 @@ type FormState = {
   status: "OPEN" | "CLOSED"
   exitPrice: string
   pnl: string
+}
+
+interface ScoringState {
+  score: number
+  tier: string
+  breakdown: Record<string, boolean>
 }
 
 const emptyForm: FormState = {
@@ -93,7 +105,6 @@ function tradeToForm(t: SerializedTrade): FormState {
     stopLoss: String(t.stopLoss),
     takeProfit: String(t.takeProfit),
     lots: String(t.lots),
-    // <input type="datetime-local"> wants YYYY-MM-DDTHH:mm (no Z, no seconds)
     time: t.time.slice(0, 16),
     reason: t.reason ?? "",
     status: t.status === "CLOSED" ? "CLOSED" : "OPEN",
@@ -121,16 +132,22 @@ export function TradesView({ initialTrades }: TradesViewProps) {
   const [editingImages, setEditingImages] = useState<SerializedTradeImage[]>([])
   const [form, setForm] = useState<FormState>(emptyForm)
   const [submitting, setSubmitting] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [pendingScoring, setPendingScoring] = useState<ScoringState | null>(null)
+  const [pendingAutoFilled, setPendingAutoFilled] = useState(false)
   const imageManagerRef = useRef<TradeImageManagerHandle>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const trades = initialTrades
-
   const empty = useMemo(() => trades.length === 0, [trades])
 
   function openAddModal() {
     setEditingId(null)
     setEditingImages([])
     setForm({ ...emptyForm, time: nowLocalForInput() })
+    setPendingScoring(null)
+    setPendingAutoFilled(false)
     setOpen(true)
   }
 
@@ -138,7 +155,76 @@ export function TradesView({ initialTrades }: TradesViewProps) {
     setEditingId(trade.id)
     setEditingImages(trade.images)
     setForm(tradeToForm(trade))
+    setPendingScoring(
+      trade.score != null && trade.tier != null && trade.scoreBreakdown != null
+        ? { score: trade.score, tier: trade.tier, breakdown: JSON.parse(trade.scoreBreakdown) as Record<string, boolean> }
+        : null
+    )
+    setPendingAutoFilled(trade.autoFilled)
     setOpen(true)
+  }
+
+  const analyzeScreenshots = useCallback(async (files: File[]) => {
+    if (files.length === 0) return
+    setAnalyzing(true)
+    try {
+      const fd = new FormData()
+      for (const f of files) fd.append("files[]", f)
+
+      const res = await fetch("/api/analyze-image", { method: "POST", body: fd })
+      const body = (await res.json()) as {
+        extracted?: {
+          symbol: string; side: string; entry: number
+          sl: number; tp: number; lots: number; time: string
+        }
+        scoring?: { score: number; tier: string; breakdown: Record<string, boolean> }
+        notes?: string
+        error?: string
+      }
+
+      if (!res.ok) throw new Error(body.error ?? `Analysis failed (${res.status})`)
+
+      if (body.extracted) {
+        const e = body.extracted
+        setForm((prev) => ({
+          ...prev,
+          symbol: e.symbol,
+          side: (e.side === "SELL" ? "SELL" : "BUY") as "BUY" | "SELL",
+          entry: String(e.entry),
+          stopLoss: String(e.sl),
+          takeProfit: String(e.tp),
+          lots: String(e.lots),
+          time: new Date(e.time).toISOString().slice(0, 16),
+        }))
+        setPendingAutoFilled(true)
+      }
+
+      if (body.scoring) {
+        setPendingScoring(body.scoring)
+      }
+
+      if (body.notes) toast.info(body.notes, { duration: 5000 })
+      toast.success("Trade fields auto-filled from screenshot")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Analysis failed")
+    } finally {
+      setAnalyzing(false)
+    }
+  }, [])
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      ["image/png", "image/jpeg", "image/webp"].includes(f.type)
+    )
+    void analyzeScreenshots(files)
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const files = Array.from(e.clipboardData.files).filter((f) =>
+      ["image/png", "image/jpeg", "image/webp"].includes(f.type)
+    )
+    if (files.length > 0) void analyzeScreenshots(files)
   }
 
   async function submit() {
@@ -158,12 +244,17 @@ export function TradesView({ initialTrades }: TradesViewProps) {
         reason: form.reason.trim() || null,
       }
 
+      if (pendingScoring && !isEdit) {
+        payload.score = pendingScoring.score
+        payload.tier = pendingScoring.tier
+        payload.scoreBreakdown = JSON.stringify(pendingScoring.breakdown)
+        payload.autoFilled = pendingAutoFilled
+      }
+
       if (isEdit) {
         payload.status = form.status
-        payload.exitPrice =
-          form.exitPrice.trim() === "" ? null : num(form.exitPrice)
+        payload.exitPrice = form.exitPrice.trim() === "" ? null : num(form.exitPrice)
         payload.pnl = form.pnl.trim() === "" ? null : num(form.pnl)
-        // PATCH is partial; reason can be null but we always send it
       }
 
       const url = isEdit ? `/api/trades/${editingId}` : "/api/trades"
@@ -177,18 +268,16 @@ export function TradesView({ initialTrades }: TradesViewProps) {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error ?? `Request failed (${res.status})`)
+        throw new Error((body as { error?: string })?.error ?? `Request failed (${res.status})`)
       }
 
       const savedTrade = (await res.json()) as { id: string }
 
-      // After creating, upload any staged screenshots to the new trade
       if (!isEdit && imageManagerRef.current?.hasStaged()) {
         try {
           await imageManagerRef.current.flushStaged(savedTrade.id)
         } catch (err: unknown) {
-          const msg =
-            err instanceof Error ? err.message : "Some screenshots failed"
+          const msg = err instanceof Error ? err.message : "Some screenshots failed"
           toast.error(`Trade saved, but ${msg.toLowerCase()}`)
         }
       }
@@ -218,13 +307,8 @@ export function TradesView({ initialTrades }: TradesViewProps) {
   return (
     <>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-          Ledger
-        </h2>
-        <Button
-          onClick={openAddModal}
-          className="bg-neutral-900 text-white hover:bg-neutral-800"
-        >
+        <h2 className="text-lg font-semibold tracking-tight text-neutral-900">Ledger</h2>
+        <Button onClick={openAddModal} className="bg-neutral-900 text-white hover:bg-neutral-800">
           + Add trade
         </Button>
       </div>
@@ -243,25 +327,20 @@ export function TradesView({ initialTrades }: TradesViewProps) {
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Exit</TableHead>
               <TableHead className="text-right">PnL</TableHead>
+              <TableHead>Score</TableHead>
               <TableHead className="w-[120px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {empty ? (
               <TableRow>
-                <TableCell
-                  colSpan={11}
-                  className="h-32 text-center text-sm text-neutral-400"
-                >
+                <TableCell colSpan={12} className="h-32 text-center text-sm text-neutral-400">
                   No trades yet. Send a webhook or add one manually.
                 </TableCell>
               </TableRow>
             ) : (
               trades.map((t) => (
-                <TableRow
-                  key={t.id}
-                  className="group transition-colors hover:bg-neutral-50/60"
-                >
+                <TableRow key={t.id} className="group transition-colors hover:bg-neutral-50/60">
                   <TableCell className="whitespace-nowrap font-mono text-xs text-neutral-500">
                     {new Date(t.time).toLocaleString(undefined, {
                       month: "short",
@@ -280,14 +359,7 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                           className="inline-flex items-center gap-0.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600 hover:bg-neutral-200"
                           title={`${t.images.length} screenshot${t.images.length > 1 ? "s" : ""}`}
                         >
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="3" y="3" width="18" height="18" rx="2" />
                             <circle cx="8.5" cy="8.5" r="1.5" />
                             <path d="m21 15-5-5L5 21" />
@@ -298,68 +370,46 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
-                        t.side === "BUY"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-rose-50 text-rose-700"
-                      )}
-                    >
+                    <span className={cn(
+                      "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
+                      t.side === "BUY" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                    )}>
                       {t.side}
                     </span>
                   </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {t.entry}
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">
-                    {t.stopLoss}
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">
-                    {t.takeProfit}
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {t.lots}
-                  </TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{t.entry}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">{t.stopLoss}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums text-neutral-500">{t.takeProfit}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{t.lots}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "border-transparent",
-                        t.status === "OPEN"
-                          ? "bg-indigo-50 text-indigo-700"
-                          : "bg-neutral-100 text-neutral-700"
-                      )}
-                    >
+                    <Badge variant="outline" className={cn(
+                      "border-transparent",
+                      t.status === "OPEN" ? "bg-indigo-50 text-indigo-700" : "bg-neutral-100 text-neutral-700"
+                    )}>
                       {t.status}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right font-mono tabular-nums text-neutral-500">
                     {t.exitPrice ?? "—"}
                   </TableCell>
-                  <TableCell
-                    className={cn(
-                      "text-right font-mono tabular-nums",
-                      t.pnl == null && "text-neutral-400",
-                      t.pnl != null && t.pnl > 0 && "text-emerald-600",
-                      t.pnl != null && t.pnl < 0 && "text-red-600"
+                  <TableCell className={cn(
+                    "text-right font-mono tabular-nums",
+                    t.pnl == null && "text-neutral-400",
+                    t.pnl != null && t.pnl > 0 && "text-emerald-600",
+                    t.pnl != null && t.pnl < 0 && "text-red-600"
+                  )}>
+                    {t.pnl == null ? "—" : t.pnl > 0 ? `+${t.pnl.toFixed(2)}` : t.pnl.toFixed(2)}
+                  </TableCell>
+                  <TableCell>
+                    {t.score != null && t.tier != null ? (
+                      <ScoreBadge tier={t.tier} score={t.score} />
+                    ) : (
+                      <span className="text-[10px] text-neutral-300">—</span>
                     )}
-                  >
-                    {t.pnl == null
-                      ? "—"
-                      : t.pnl > 0
-                        ? `+${t.pnl.toFixed(2)}`
-                        : t.pnl.toFixed(2)}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => openEditModal(t)}
-                      >
-                        Edit
-                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => openEditModal(t)}>Edit</Button>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -378,17 +428,63 @@ export function TradesView({ initialTrades }: TradesViewProps) {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl" onPaste={handlePaste}>
           <DialogHeader>
-            <DialogTitle>
-              {editingId === null ? "Add trade" : "Edit trade"}
-            </DialogTitle>
+            <DialogTitle>{editingId === null ? "Add trade" : "Edit trade"}</DialogTitle>
             <DialogDescription>
               {editingId === null
-                ? "Capture a manual trade entry. Webhook-fed trades will appear automatically."
+                ? "Paste or drop TradingView screenshots to auto-fill fields, or enter manually."
                 : "Update fields. Set status to CLOSED and add Exit/PnL when the trade closes."}
             </DialogDescription>
           </DialogHeader>
+
+          {editingId === null && (
+            <div
+              ref={dropZoneRef}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              className={cn(
+                "flex min-h-[72px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-neutral-200 bg-neutral-50 px-4 py-3 text-center transition-colors hover:border-neutral-300 hover:bg-neutral-100",
+                analyzing && "cursor-wait opacity-70"
+              )}
+              onClick={() => !analyzing && fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  void analyzeScreenshots(files)
+                  e.target.value = ""
+                }}
+              />
+              {analyzing ? (
+                <span className="text-xs text-neutral-500">Analyzing screenshots with Claude Vision…</span>
+              ) : (
+                <>
+                  <svg className="mb-1 h-5 w-5 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <p className="text-xs font-medium text-neutral-600">Paste or drop TradingView screenshots</p>
+                  <p className="text-[10px] text-neutral-400">Up to 3 images (PNG, JPEG, WebP) · Claude Vision auto-fills fields</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {pendingScoring && (
+            <ScoreBreakdown
+              tier={pendingScoring.tier}
+              score={pendingScoring.score}
+              breakdown={pendingScoring.breakdown}
+              defaultOpen
+            />
+          )}
 
           <form
             onSubmit={(e) => {
@@ -402,23 +498,14 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                 id="symbol"
                 required
                 value={form.symbol}
-                onChange={(e) =>
-                  setForm({ ...form, symbol: e.target.value.toUpperCase() })
-                }
+                onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })}
                 placeholder="EURUSD"
               />
             </Field>
 
             <Field label="Side" id="side">
-              <Select
-                value={form.side}
-                onValueChange={(v) =>
-                  setForm({ ...form, side: v as "BUY" | "SELL" })
-                }
-              >
-                <SelectTrigger id="side">
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={form.side} onValueChange={(v) => setForm({ ...form, side: v as "BUY" | "SELL" })}>
+                <SelectTrigger id="side"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="BUY">BUY</SelectItem>
                   <SelectItem value="SELL">SELL</SelectItem>
@@ -427,74 +514,34 @@ export function TradesView({ initialTrades }: TradesViewProps) {
             </Field>
 
             <Field label="Entry" id="entry">
-              <Input
-                id="entry"
-                type="number"
-                step="any"
-                required
-                value={form.entry}
-                onChange={(e) => setForm({ ...form, entry: e.target.value })}
-              />
+              <Input id="entry" type="number" step="any" required value={form.entry}
+                onChange={(e) => setForm({ ...form, entry: e.target.value })} />
             </Field>
 
             <Field label="Lots" id="lots">
-              <Input
-                id="lots"
-                type="number"
-                step="any"
-                required
-                value={form.lots}
-                onChange={(e) => setForm({ ...form, lots: e.target.value })}
-              />
+              <Input id="lots" type="number" step="any" required value={form.lots}
+                onChange={(e) => setForm({ ...form, lots: e.target.value })} />
             </Field>
 
             <Field label="Stop loss" id="stopLoss">
-              <Input
-                id="stopLoss"
-                type="number"
-                step="any"
-                required
-                value={form.stopLoss}
-                onChange={(e) =>
-                  setForm({ ...form, stopLoss: e.target.value })
-                }
-              />
+              <Input id="stopLoss" type="number" step="any" required value={form.stopLoss}
+                onChange={(e) => setForm({ ...form, stopLoss: e.target.value })} />
             </Field>
 
             <Field label="Take profit" id="takeProfit">
-              <Input
-                id="takeProfit"
-                type="number"
-                step="any"
-                required
-                value={form.takeProfit}
-                onChange={(e) =>
-                  setForm({ ...form, takeProfit: e.target.value })
-                }
-              />
+              <Input id="takeProfit" type="number" step="any" required value={form.takeProfit}
+                onChange={(e) => setForm({ ...form, takeProfit: e.target.value })} />
             </Field>
 
             <Field label="Time" id="time">
-              <Input
-                id="time"
-                type="datetime-local"
-                required
-                value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
-              />
+              <Input id="time" type="datetime-local" required value={form.time}
+                onChange={(e) => setForm({ ...form, time: e.target.value })} />
             </Field>
 
             {editingId !== null && (
               <Field label="Status" id="status">
-                <Select
-                  value={form.status}
-                  onValueChange={(v) =>
-                    setForm({ ...form, status: v as "OPEN" | "CLOSED" })
-                  }
-                >
-                  <SelectTrigger id="status">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v as "OPEN" | "CLOSED" })}>
+                  <SelectTrigger id="status"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="OPEN">OPEN</SelectItem>
                     <SelectItem value="CLOSED">CLOSED</SelectItem>
@@ -506,41 +553,21 @@ export function TradesView({ initialTrades }: TradesViewProps) {
             {editingId !== null && (
               <>
                 <Field label="Exit price" id="exitPrice">
-                  <Input
-                    id="exitPrice"
-                    type="number"
-                    step="any"
-                    value={form.exitPrice}
-                    onChange={(e) =>
-                      setForm({ ...form, exitPrice: e.target.value })
-                    }
-                    placeholder="—"
-                  />
+                  <Input id="exitPrice" type="number" step="any" value={form.exitPrice}
+                    onChange={(e) => setForm({ ...form, exitPrice: e.target.value })} placeholder="—" />
                 </Field>
                 <Field label="PnL" id="pnl">
-                  <Input
-                    id="pnl"
-                    type="number"
-                    step="any"
-                    value={form.pnl}
-                    onChange={(e) => setForm({ ...form, pnl: e.target.value })}
-                    placeholder="—"
-                  />
+                  <Input id="pnl" type="number" step="any" value={form.pnl}
+                    onChange={(e) => setForm({ ...form, pnl: e.target.value })} placeholder="—" />
                 </Field>
               </>
             )}
 
             <div className="col-span-2">
               <Field label="Reason" id="reason">
-                <Textarea
-                  id="reason"
-                  rows={2}
-                  value={form.reason}
-                  onChange={(e) =>
-                    setForm({ ...form, reason: e.target.value })
-                  }
-                  placeholder="Breakout above 1.0845 resistance"
-                />
+                <Textarea id="reason" rows={2} value={form.reason}
+                  onChange={(e) => setForm({ ...form, reason: e.target.value })}
+                  placeholder="Breakout above 1.0845 resistance" />
               </Field>
             </div>
 
@@ -549,30 +576,14 @@ export function TradesView({ initialTrades }: TradesViewProps) {
                 ref={imageManagerRef}
                 tradeId={editingId}
                 initialImages={editingImages}
-                onChange={() =>
-                  startTransition(() => router.refresh())
-                }
+                onChange={() => startTransition(() => router.refresh())}
               />
             </div>
 
             <DialogFooter className="col-span-2 mt-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={submitting}
-                className="bg-neutral-900 text-white hover:bg-neutral-800"
-              >
-                {submitting
-                  ? "Saving…"
-                  : editingId === null
-                    ? "Add trade"
-                    : "Save changes"}
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={submitting} className="bg-neutral-900 text-white hover:bg-neutral-800">
+                {submitting ? "Saving…" : editingId === null ? "Add trade" : "Save changes"}
               </Button>
             </DialogFooter>
           </form>
@@ -582,20 +593,10 @@ export function TradesView({ initialTrades }: TradesViewProps) {
   )
 }
 
-function Field({
-  label,
-  id,
-  children,
-}: {
-  label: string
-  id: string
-  children: React.ReactNode
-}) {
+function Field({ label, id, children }: { label: string; id: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id} className="text-xs font-medium text-neutral-700">
-        {label}
-      </Label>
+      <Label htmlFor={id} className="text-xs font-medium text-neutral-700">{label}</Label>
       {children}
     </div>
   )
