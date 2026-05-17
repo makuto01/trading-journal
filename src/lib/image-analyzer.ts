@@ -129,7 +129,8 @@ export async function analyzeImages(
 
   let parsed: unknown
   try {
-    parsed = JSON.parse(textBlock.text.trim())
+    const raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+    parsed = JSON.parse(raw)
   } catch {
     throw new Error(`Claude Vision returned non-JSON: ${textBlock.text.slice(0, 200)}`)
   }
