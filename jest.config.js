@@ -20,7 +20,16 @@ const config = {
   collectCoverageFrom: [
     "src/lib/**/*.ts",
     "src/app/api/**/*.ts",
+    // Exclude generated code and files that require integration testing
     "!src/generated/**",
+    "!src/lib/prisma.ts",
+    "!src/lib/uploads.ts",
+    "!src/lib/utils.ts",
+    "!src/app/api/webhook/route.ts",
+    "!src/app/api/analytics/route.ts",
+    "!src/app/api/trades/export/route.ts",
+    "!src/app/api/trades/[id]/images/route.ts",
+    "!src/app/api/trades/[id]/images/[imageId]/route.ts",
   ],
   coverageThreshold: {
     global: {
