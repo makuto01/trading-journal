@@ -154,4 +154,41 @@ describe("calcAnalytics", () => {
     ]
     expect(calcAnalytics(trades).currentStreak).toEqual({ type: "loss", count: 1 })
   })
+
+  test("avgScore is null when no trades have scores", () => {
+    const trades = [trade({ pnl: 100 }), trade({ pnl: -50 })]
+    expect(calcAnalytics(trades).avgScore).toBeNull()
+  })
+
+  test("avgScore computes average of scored trades only", () => {
+    const trades = [
+      { ...trade({ pnl: 100 }), score: 10, tier: "S" },
+      { ...trade({ pnl: -50 }), score: 6, tier: "B" },
+      trade({ pnl: 80 }), // no score — excluded from avg
+    ]
+    const { avgScore } = calcAnalytics(trades)
+    expect(avgScore).toBeCloseTo(8)
+  })
+
+  test("tierDistribution groups trades by tier with win rates", () => {
+    const trades = [
+      { ...trade({ pnl: 100 }), score: 10, tier: "S" },
+      { ...trade({ pnl: 50 }), score: 10, tier: "S" },
+      { ...trade({ pnl: -30 }), score: 6, tier: "B" },
+    ]
+    const { tierDistribution } = calcAnalytics(trades)
+
+    const s = tierDistribution.find((d) => d.tier === "S")
+    const b = tierDistribution.find((d) => d.tier === "B")
+
+    expect(s?.count).toBe(2)
+    expect(s?.winRate).toBe(1)
+    expect(b?.count).toBe(1)
+    expect(b?.winRate).toBe(0)
+  })
+
+  test("tierDistribution is empty when no trades have tiers", () => {
+    const trades = [trade({ pnl: 100 }), trade({ pnl: -50 })]
+    expect(calcAnalytics(trades).tierDistribution).toHaveLength(0)
+  })
 })

@@ -44,7 +44,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     prisma.trade.count({ where: { status: "OPEN" } }),
     prisma.trade.findMany({
       where: { status: "CLOSED" },
-      select: { id: true, time: true, pnl: true, symbol: true },
+      select: { id: true, time: true, pnl: true, symbol: true, score: true, tier: true },
     }),
   ])
 
@@ -53,6 +53,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     time: t.time.toISOString(),
     pnl: t.pnl ?? 0,
     symbol: t.symbol,
+    score: t.score,
+    tier: t.tier,
   }))
   const analytics = calcAnalytics(closedForAnalytics)
 

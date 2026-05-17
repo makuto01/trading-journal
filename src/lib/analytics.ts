@@ -3,6 +3,8 @@ export interface ClosedTrade {
   time: string // ISO-8601
   pnl: number
   symbol: string
+  score?: number | null
+  tier?: string | null
 }
 
 export interface EquityPoint {
@@ -13,6 +15,12 @@ export interface EquityPoint {
 export interface Streak {
   type: "win" | "loss" | "none"
   count: number
+}
+
+export interface TierDistribution {
+  tier: string
+  count: number
+  winRate: number | null
 }
 
 export interface Analytics {
@@ -29,6 +37,8 @@ export interface Analytics {
   totalPnl: number
   equityCurve: EquityPoint[]
   currentStreak: Streak
+  avgScore: number | null
+  tierDistribution: TierDistribution[]
 }
 
 export function calcAnalytics(trades: ClosedTrade[]): Analytics {
@@ -72,6 +82,11 @@ export function calcAnalytics(trades: ClosedTrade[]): Analytics {
   // Current streak: how many consecutive wins or losses ending on the last trade.
   const currentStreak = calcStreak(sorted)
 
+  const scored = sorted.filter((t) => t.score != null)
+  const avgScore = scored.length === 0 ? null : scored.reduce((s, t) => s + (t.score ?? 0), 0) / scored.length
+
+  const tierDistribution = calcTierDistribution(sorted)
+
   return {
     totalTrades: sorted.length,
     winners: winners.length,
@@ -86,7 +101,29 @@ export function calcAnalytics(trades: ClosedTrade[]): Analytics {
     totalPnl,
     equityCurve,
     currentStreak,
+    avgScore,
+    tierDistribution,
   }
+}
+
+function calcTierDistribution(sorted: ClosedTrade[]): TierDistribution[] {
+  const tierOrder = ["S", "A", "B", "C", "D", "F"]
+  const map = new Map<string, { count: number; wins: number }>()
+
+  for (const t of sorted) {
+    if (!t.tier) continue
+    const entry = map.get(t.tier) ?? { count: 0, wins: 0 }
+    entry.count++
+    if (t.pnl != null && t.pnl > 0) entry.wins++
+    map.set(t.tier, entry)
+  }
+
+  return tierOrder
+    .filter((tier) => map.has(tier))
+    .map((tier) => {
+      const { count, wins } = map.get(tier)!
+      return { tier, count, winRate: count === 0 ? null : wins / count }
+    })
 }
 
 function calcStreak(sorted: ClosedTrade[]): Streak {
