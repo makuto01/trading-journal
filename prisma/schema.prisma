@@ -31,10 +31,26 @@ model Trade {
   tier           String?
   scoreBreakdown String?
   autoFilled     Boolean      @default(false)
+  source         String       @default("manual")
 
   @@index([status])
   @@index([symbol])
   @@index([time])
+}
+
+model BotLog {
+  id        String   @id @default(cuid())
+  ts        DateTime @default(now())
+  level     String
+  event     String
+  symbol    String?
+  message   String
+  payload   String?
+  tradeId   String?
+
+  @@index([ts])
+  @@index([event])
+  @@index([symbol])
 }
 
 model TradeImage {

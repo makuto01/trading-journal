@@ -49,3 +49,6 @@ next-env.d.ts
 
 # User-uploaded trade screenshots
 /public/uploads
+
+.vercel
+.env*
