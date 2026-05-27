@@ -1,8 +1,6 @@
-import { promises as fs } from "fs"
-import path from "path"
+import { put, del } from "@vercel/blob"
 import { randomUUID } from "crypto"
 
-const UPLOAD_ROOT = path.join(process.cwd(), "public", "uploads", "trades")
 const MAX_BYTES = 5 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
   "image/png",
@@ -39,26 +37,24 @@ export async function saveTradeImage(
   }
 
   const extension = EXTENSION_BY_TYPE[file.type]
-  const filename = `${randomUUID()}.${extension}`
-  const dir = path.join(UPLOAD_ROOT, tradeId)
-  await fs.mkdir(dir, { recursive: true })
+  const pathname = `trades/${tradeId}/${randomUUID()}.${extension}`
 
-  const filepath = path.join(dir, filename)
-  const buffer = Buffer.from(await file.arrayBuffer())
-  await fs.writeFile(filepath, buffer)
+  const blob = await put(pathname, file, {
+    access: "public",
+    contentType: file.type,
+  })
 
   return {
-    url: `/uploads/trades/${tradeId}/${filename}`,
+    url: blob.url,
     bytes: file.size,
     type: file.type,
   }
 }
 
 export async function deleteTradeImageFile(url: string): Promise<void> {
-  if (!url.startsWith("/uploads/trades/")) return
-  const relative = url.replace(/^\//, "")
-  const fullpath = path.join(process.cwd(), "public", relative)
-  await fs.unlink(fullpath).catch(() => {
+  // Skip legacy local URLs (e.g. from a previous SQLite/local setup)
+  if (!url.startsWith("https://")) return
+  await del(url).catch(() => {
     // Silently ignore — file already gone is fine
   })
 }
